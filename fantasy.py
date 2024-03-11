@@ -319,24 +319,3 @@ def calculate_perms():
             for j in range(len(baby[i][1])):
                 summ += 1
     return summ
-
-# with open(f"TOR.pkl", 'rb') as fff:
-#     baby = pickle.load(fff)
-
-# test_keep = ["SAC", "MIN", "ORL", "SAC", "HOU", "PHI", "SAS", "TOR", "CHA", "CLE"]
-# swappables = [['TOR'], ['DET'], ['CHA']]
-# # #final(8, 3, 2024, 2, 22, swappables, test_keep)
-# df = pd.read_csv("2024-02-26.csv")
-# x = list(df.columns)
-# x.pop(0)
-# generate_random(x, swappables)
-# print(calculate_perms())
-# with open('TOR.pkl', 'rb') as ff:
-#     copy = pickle.load(ff)
-#     head = copy
-#     for p in range(7):
-#         head.teams = ["DET"]
-#         head = head.swap[len(head.swap) - 1]
-#     head.teams = ["DET"]
-#     with open(f'DET.pkl', 'wb') as outp:
-#         pickle.dump(copy, outp, pickle.HIGHEST_PROTOCOL)
