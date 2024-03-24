@@ -132,7 +132,7 @@ def get_free_agents(login, password0):
     arr3.extend(tup2[2])
     arr3.extend(tup3[2])
 
-    data = {"Name" : players_list, "Team" : players_team_final, "Average" : arr2, "Last 5" : arr1, "Dev" : arr3}
+    data = {"Name" : players_list, "Team" : players_team_final, "Average" : arr2, "Last 5" : arr1, "SD" : arr3}
     df = pd.DataFrame(data)
     df.to_csv("free_agents.csv")
 
@@ -141,6 +141,7 @@ def obtain_helper(driver, players_list1):
     ftsy_data = []
     mean = []
     standard_dev = []
+    #variance = []
     for ele in players_list1:
         print(ele.get_attribute("title"))
         ele.click()
@@ -168,20 +169,22 @@ def obtain_helper(driver, players_list1):
             dat = [x for x in vect if x != "--"]
             mean.append(round(statistics.mean(dat), 2))
             standard_dev.append("--")
+            #variance.append(0)
         elif n != 0:
             dat = [x for x in vect if x != "--"]
             mean.append(round(statistics.mean(dat), 2))
             standard_dev.append(round(statistics.stdev(dat), 2))
+            #variance.append(round(statistics.variance(dat), 2))
         else:
             mean.append("--")
             standard_dev.append("--")
-
+            #variance.append(0)
         exiting = driver.find_element(By.CLASS_NAME, "lightbox__closebtn")
         exiting.click()
     return (ftsy_data, mean, standard_dev)
 
 
-def filter_df(average, keep_list):
+def filter_df(average):
     if os.path.exists("free_agents.csv"):
         pass
     else: 
@@ -199,4 +202,3 @@ def filter_df(average, keep_list):
     result = df.groupby('Team').agg({'Average': 'max', 'Name': 'first'}).reset_index()
     result.to_csv("filtered_agents2.csv")
     return [x for x in list(mapper.values()) if (x not in filter_df['Team'].values)]
-
