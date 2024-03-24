@@ -7,3 +7,4 @@ Using ESPN Fantasy Basketball, the idea is to maximize the number of players pla
     - create decision tree of swapping or keeping player
     - find all possible combinations that maximizes the number of plays in an entire week
     - showcase procedure 
+3. once scraped free agent data, visualize the best options through scatter plot of averages vs coefficient of variance
