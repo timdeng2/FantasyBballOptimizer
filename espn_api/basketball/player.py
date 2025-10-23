@@ -25,6 +25,12 @@ class Player(object):
         self.last_15_stats = {name: -1 for name in STATS_MAP.values() if name != ''}
         self.last_30_stats = {name: -1 for name in STATS_MAP.values() if name != ''}
 
+        self.nine_cat_averages = {name : 0 for name in NINE_CAT_STATS}
+        self.nine_cat_projected = {name : 0 for name in NINE_CAT_STATS}
+        self.nine_cat_last_7 = {name : 0 for name in NINE_CAT_STATS}
+        self.nine_cat_last_15 = {name : 0 for name in NINE_CAT_STATS}
+        self.nine_cat_last_30 = {name : 0 for name in NINE_CAT_STATS}
+
         self.schedule = {}
         self.news = {}
         expected_return_date = json_parsing(data, 'expectedReturnDate')
@@ -111,6 +117,63 @@ class Player(object):
         self.avg_points = self.stats.get(f'{year}_total', {}).get('applied_avg', 0)
         self.projected_total_points= self.stats.get(f'{year}_projected', {}).get('applied_total', 0)
         self.projected_avg_points = self.stats.get(f'{year}_projected', {}).get('applied_avg', 0)
+
+        sources0 = [
+            self.projected_stats,
+            self.average_stats,
+            self.last_7_stats,
+            self.last_15_stats,
+            self.last_30_stats
+        ]
+        sources1 = [
+            self.average_stats,
+            self.projected_stats,
+            self.last_7_stats,
+            self.last_15_stats,
+            self.last_30_stats
+        ]
+        sources2 = [
+            self.last_7_stats,
+            self.projected_stats,
+            self.last_15_stats,
+            self.last_30_stats,
+            self.average_stats,
+        ]
+        sources3 = [
+            self.last_15_stats,
+            self.last_7_stats,
+            self.projected_stats,
+            self.last_30_stats,
+            self.average_stats,
+        ]  
+        sources4 = [
+            self.last_30_stats,
+            self.last_15_stats,
+            self.last_7_stats,
+            self.projected_stats,
+            self.average_stats,
+        ] 
+
+        self.nine_cat_projected = self.combined_helper(sources0)
+        self.nine_cat_averages = self.combined_helper(sources1)
+        self.nine_cat_last_7 = self.combined_helper(sources2)
+        self.nine_cat_last_15 = self.combined_helper(sources3)
+        self.nine_cat_last_30 = self.combined_helper(sources4)
+
+    
+    def combined_helper(self, sources):
+        combined = {name: -1 for name in NINE_CAT_STATS}
+        for stats_dict in sources:
+            for stat_name, value in stats_dict.items():
+                if stat_name in combined.keys() and combined[stat_name] == -1 and value != -1:
+                    combined[stat_name] = value
+        
+        #ensure none of them is still -1
+        for k, v in combined.items():
+            if v == -1:
+                combined[k] = 0.0
+        assert len(combined) == 11
+        return combined
 
     def __repr__(self):
         return f'Player({self.name})'

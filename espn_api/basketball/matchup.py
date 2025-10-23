@@ -30,11 +30,11 @@ class Matchup(object):
         # if stats are available
         if 'cumulativeScore' in data[team].keys() and data[team]['cumulativeScore']['scoreByStat']:
 
+
             team_live_score = (data[team]['cumulativeScore']['wins'] +
                                data[team]['cumulativeScore']['ties']/2)
-
             team_cats = { STATS_MAP.get(i, i): {'score': data[team]['cumulativeScore']['scoreByStat'][i]['score'],
                                                    'result': data[team]['cumulativeScore']['scoreByStat'][i]['result']} for i in data[team]['cumulativeScore']['scoreByStat'].keys()}
-
+                        
         return (team_id, final_score, team_cats, team_live_score)
 

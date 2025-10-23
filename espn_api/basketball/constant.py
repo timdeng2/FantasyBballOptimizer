@@ -113,7 +113,6 @@ STATS_MAP = {
     '42': 'GP',
     '43': 'TW',
     '44': 'FTR',
-    '45': '45',
 }
 
 STAT_ID_MAP = {
@@ -157,8 +156,10 @@ NINE_CAT_STATS = {
     '3PM',
     'AST',
     'BLK',
-    'FG%',
-    'FT%',
+    'FGA',
+    'FGM',
+    'FTA',
+    'FTM',
     'PTS',
     'REB',
     'STL',
