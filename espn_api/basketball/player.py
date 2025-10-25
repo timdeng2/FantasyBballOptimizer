@@ -7,12 +7,14 @@ class Player(object):
     '''Player are part of team'''
     def __init__(self, data, year, pro_team_schedule = None, news = None):
         self.name = json_parsing(data, 'fullName')
+        # if self.name == "Bam Adebayo":
+        #     print(data)
         self.playerId = json_parsing(data, 'id')
         self.year = year
 
         self.position = POSITION_MAP[json_parsing(data, 'defaultPositionId') - 1]
         self.lineupSlot = POSITION_MAP.get(data.get('lineupSlotId'), '')
-        self.eligibleSlots = [POSITION_MAP[pos] for pos in json_parsing(data, 'eligibleSlots')]
+        self.eligibleSlots = [POSITION_MAP[pos] for pos in json_parsing(data, 'eligibleSlots') if pos < 5]
         self.acquisitionType = json_parsing(data, 'acquisitionType')
         self.proTeam = PRO_TEAM_MAP[json_parsing(data, 'proTeamId')]
         self.injuryStatus = json_parsing(data, 'injuryStatus')
