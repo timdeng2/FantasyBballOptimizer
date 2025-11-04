@@ -2,13 +2,15 @@ from .constant import NINE_CAT_STATS, POSITION_MAP, PRO_TEAM_MAP, STATS_MAP, STA
 from espn_api.utils.utils import json_parsing
 from datetime import datetime
 from functools import cached_property
+import sys, os
+root_dir = os.path.abspath(os.path.join(os.getcwd(), '..'))
+sys.path.append(root_dir)
+import json
 
 class Player(object):
     '''Player are part of team'''
     def __init__(self, data, year, pro_team_schedule = None, news = None):
         self.name = json_parsing(data, 'fullName')
-        # if self.name == "Bam Adebayo":
-        #     print(data)
         self.playerId = json_parsing(data, 'id')
         self.year = year
 
@@ -33,18 +35,30 @@ class Player(object):
         self.nine_cat_last_15 = {name : 0 for name in NINE_CAT_STATS}
         self.nine_cat_last_30 = {name : 0 for name in NINE_CAT_STATS}
 
-        self.schedule = {}
+        self.schedule = None
+
+        file_path = f"../Schedules/Team/{year}_schedule.json"
+        if os.path.exists(file_path):
+            with open(file_path, "r") as f:
+                team_dates = json.load(f)
+                if self.proTeam != "FA":
+                    self.schedule = team_dates[self.proTeam]
+        else:
+            print("Error opening schedule")
+
         self.news = {}
         expected_return_date = json_parsing(data, 'expectedReturnDate')
+        if expected_return_date:
+            print(expected_return_date)
         self.expected_return_date = datetime(*expected_return_date).date() if expected_return_date else None
 
-        if pro_team_schedule:
-            pro_team_id = json_parsing(data, 'proTeamId')
-            pro_team = pro_team_schedule.get(pro_team_id, {})
-            for key in pro_team:
-                game = pro_team[key][0]
-                team = game['awayProTeamId'] if game['awayProTeamId'] != pro_team_id else game['homeProTeamId']
-                self.schedule[key] = { 'team': PRO_TEAM_MAP[team], 'date': datetime.fromtimestamp(game['date']/1000.0) }
+        # if pro_team_schedule:
+        #     pro_team_id = json_parsing(data, 'proTeamId')
+        #     pro_team = pro_team_schedule.get(pro_team_id, {})
+        #     for key in pro_team:
+        #         game = pro_team[key][0]
+        #         team = game['awayProTeamId'] if game['awayProTeamId'] != pro_team_id else game['homeProTeamId']
+        #         self.schedule[key] = { 'team': PRO_TEAM_MAP[team], 'date': datetime.fromtimestamp(game['date']/1000.0) }
 
         if news:
             news_feed = news.get("news", {}).get("feed", [])

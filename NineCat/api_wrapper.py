@@ -2,38 +2,55 @@ import sys, os
 root_dir = os.path.abspath(os.path.join(os.getcwd(), '..'))
 sys.path.append(root_dir)
 
+
+from create_schedule import schedule_to_csv, csv_to_team_dates
 from espn_api.basketball import League
 from espn_api.basketball.constant import NINE_CAT_STATS
 from typing import List
 import requests
 import pandas as pd
 import time
-from datetime import date, timedelta
-from scipy.stats import rankdata
-
+from datetime import date, datetime, timedelta
 
 class LeagueWrapper:
     def __init__(self, league_id : int, s2 : str, swid : str, year : int, sortOrder : str, end_date : date = None):
         if sortOrder not in ["average", "projected", "last 7", "last 15", "last 30"]:
             raise "Unknown Filter"
+        
+        print("Fetching Schedule...")
+        file_path = f"../Schedules/Team/{year}_schedule.json"
+
+        if not os.path.exists(file_path):
+            file_path2 = f"../Schedules/Total/{year}_schedule.csv"
+            if not os.path.exists(file_path2):
+                schedule_to_csv("../", year - 1)
+                
+            csv_to_team_dates(f"../Schedules/Total/{year}_schedule.csv", file_path)
+        print("Schedule is loaded")
+
+
+
         self.today = date.today()
         self.end_date = None
         if not end_date or end_date < self.today:
             self.end_date = self.first_sunday()
         else:
             self.end_date = end_date
-            
+
+        print("Fetching ESPN API...")    
         self.league = League(league_id=league_id, year=year, espn_s2=s2, swid=swid, debug=False)
         self.sortOrder = sortOrder
         self.base_player_dataframe = self.build_player_df(self.sortOrder)
         #dataframe of scores, list of tuple containing matchups
         (self.scoreboard, self.matchups) = self.get_scoreboard()
 
+        print("Initializing Images...")
         self.initialize_images()
+        print("Finished Intitializing Images")
+
         self.build_percentile()
 
     def initialize_images(self):
-        print(f"Working Directory: {os.getcwd()}")
         folder = "../PlayerHeadshots"
         ids = {os.path.splitext(f)[0] for f in os.listdir(folder) if f.endswith(".png")}
 
@@ -46,16 +63,18 @@ class LeagueWrapper:
         }
 
         for i, pid in enumerate(self.base_player_dataframe['Player ID']):
-            if pid not in ids:  
+            if str(pid) not in ids:
                 url = f"https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/{pid}.png"
                 save_path = f"{folder}/{pid}.png"
                 response = requests.get(url, headers=headers)
                 if response.status_code == 200:
                     with open(save_path, "wb") as f:
                         f.write(response.content)
+                elif response.status_code == 404:
+                    print(f"❌ No current available image for {self.base_player_dataframe['Player Name'][i]}")
                 else:
-                    print(f"❌ Failed to download image for {self.base_player_dataframe['Player ID'][i]}. Status code: {response.status_code}")
-                time.sleep(0.2)
+                    print(f"❌ Unknown Error while fetching for {self.base_player_dataframe['Player Name'][i]}'s headshot. Status code: {response.status_code}")
+                time.sleep(0.1)
 
 
     
@@ -64,12 +83,10 @@ class LeagueWrapper:
         free_agents = self.league.free_agents(size=200)
         teams = self.league.teams
 
-        exclude = ['FGM','FGA','FTM','FTA']
-
+        positions = ['PG','SG','SF','PF','C']
         columns = ['Player Name', 'Player ID', 'Team', 'Team ID'] + list(NINE_CAT_STATS) + \
-            ['FT%', 'FG%'] + \
-            ['Expected Games', 'Positions'] + \
-            [f"Expected {stat}" for stat in NINE_CAT_STATS]
+            ['FT%', 'FG%', 'Expected Games'] + positions + \
+            [f"Expected {stat}" for stat in NINE_CAT_STATS] + ["ProTeam"] 
         player_df = pd.DataFrame(columns=columns)
 
         for team in teams:
@@ -98,10 +115,9 @@ class LeagueWrapper:
                 
                 expected_games = 0
                 if player.injuryStatus and player.injuryStatus != "OUT":
-                    dates = [entry['date'].date() for entry in player.schedule.values()]
-                    if not player.schedule:
-                        print(player.name)
-                    expected_games = self.calculate_num_games(dates)
+                    if player.schedule:
+                        dates = [datetime.strptime(entry, "%Y-%m-%d").date() for entry in player.schedule]
+                        expected_games = self.calculate_num_games(dates)
                 
                 player_data['FT%'] = round(
                     float(player_data['FTM'] / player_data['FTA']) if player_data['FTA'] != 0 else 0.0,
@@ -112,11 +128,15 @@ class LeagueWrapper:
                     2
                 )
                 player_data['Expected Games'] = expected_games
-                player_data['Positions'] = player.eligibleSlots
+                for pos in positions:
+                    if pos in player.eligibleSlots:
+                        player_data[pos] = 1
+                    else:
+                        player_data[pos] = 0
 
                 for stat in NINE_CAT_STATS:
-                    if stat not in exclude:
-                        player_data[f'Expected {stat}'] = round(float(player_data[stat]) * expected_games, 2)
+                    player_data[f'Expected {stat}'] = round(float(player_data[stat]) * expected_games, 2)
+                player_data["ProTeam"] = player.proTeam
 
                 player_df.loc[len(player_df)] = player_data
 
@@ -144,10 +164,12 @@ class LeagueWrapper:
                     player_data[k] = v
 
             expected_games = 0
+
             if fa.injuryStatus and fa.injuryStatus != "OUT":
-                dates = [entry['date'].date() for entry in fa.schedule.values()]
-                expected_games = self.calculate_num_games(dates)
-            
+                if fa.schedule:
+                    dates = [datetime.strptime(entry, "%Y-%m-%d").date() for entry in fa.schedule]
+                    expected_games = self.calculate_num_games(dates)
+
             player_data['FT%'] = round(
                 float(player_data['FTM'] / player_data['FTA']) if player_data['FTA'] != 0 else 0.0,
                 2
@@ -157,11 +179,15 @@ class LeagueWrapper:
                 2
             )
             player_data['Expected Games'] = expected_games
-            player_data['Positions'] = fa.eligibleSlots
+            for pos in positions:
+                if pos in fa.eligibleSlots:
+                    player_data[pos] = 1
+                else:
+                    player_data[pos] = 0
 
             for stat in NINE_CAT_STATS:
-                if stat not in exclude:
-                    player_data[f'Expected {stat}'] = round(float(player_data[stat]) * expected_games, 2)
+                player_data[f'Expected {stat}'] = round(float(player_data[stat]) * expected_games, 2)
+            player_data["ProTeam"] = fa.proTeam
 
             player_df.loc[len(player_df)] = player_data
         
