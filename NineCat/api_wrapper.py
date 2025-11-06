@@ -10,11 +10,12 @@ from typing import List
 import requests
 import pandas as pd
 import time
+import json
 from datetime import date, datetime, timedelta
 
 class LeagueWrapper:
     def __init__(self, league_id : int, s2 : str, swid : str, year : int, sortOrder : str, end_date : date = None):
-        if sortOrder not in ["average", "projected", "last 7", "last 15", "last 30"]:
+        if sortOrder not in ["average", "projected", "last 7", "last 15", "last 30", "total"]:
             raise "Unknown Filter"
         
         print("Fetching Schedule...")
@@ -26,6 +27,11 @@ class LeagueWrapper:
                 schedule_to_csv("../", year - 1)
                 
             csv_to_team_dates(f"../Schedules/Total/{year}_schedule.csv", file_path)
+
+
+        with open(file_path, "r") as f:
+            self.team_dates = json.load(f)
+
         print("Schedule is loaded")
 
 
@@ -76,17 +82,25 @@ class LeagueWrapper:
                     print(f"❌ Unknown Error while fetching for {self.base_player_dataframe['Player Name'][i]}'s headshot. Status code: {response.status_code}")
                 time.sleep(0.1)
 
-
+    def get_dates(self) -> List[date]:
+        today = date.today()
+        days_until_sunday = (6 - today.weekday()) % 7
+        dates = [today + timedelta(days=i) for i in range(days_until_sunday + 1)]
+        return [d.strftime("%Y-%m-%d") for d in dates]
     
+
     def build_player_df(self, sortOrder : str):
         # builds rostered players first
         free_agents = self.league.free_agents(size=200)
         teams = self.league.teams
+        date_strings = self.get_dates()
+
 
         positions = ['PG','SG','SF','PF','C']
         columns = ['Player Name', 'Player ID', 'Team', 'Team ID'] + list(NINE_CAT_STATS) + \
             ['FT%', 'FG%', 'Expected Games'] + positions + \
-            [f"Expected {stat}" for stat in NINE_CAT_STATS] + ["ProTeam"] 
+            [f"Expected {stat}" for stat in NINE_CAT_STATS] + ["ProTeam"] + ['Injured'] + \
+            date_strings
         player_df = pd.DataFrame(columns=columns)
 
         for team in teams:
@@ -112,12 +126,27 @@ class LeagueWrapper:
                 elif sortOrder == "last 30":
                     for k, v in player.nine_cat_last_30.items():
                         player_data[k] = v
+                elif sortOrder == "total":
+                    for k, v in player.nine_cat_total.items():
+                        player_data[k] = v
                 
                 expected_games = 0
                 if player.injuryStatus and player.injuryStatus != "OUT":
-                    if player.schedule:
-                        dates = [datetime.strptime(entry, "%Y-%m-%d").date() for entry in player.schedule]
-                        expected_games = self.calculate_num_games(dates)
+                    player_data['Injured'] = False
+                    for date in date_strings:
+                        if player.proTeam != "FA":
+                            if date in self.team_dates[player.proTeam]:
+                                player_data[date] = 1
+                                expected_games += 1
+                            else:
+                                player_data[date] = 0
+                        else:
+                            for date in date_strings:
+                                player_data[date] = 0
+                else:
+                    player_data['Injured'] = True
+                    for date in date_strings:
+                        player_data[date] = 0
                 
                 player_data['FT%'] = round(
                     float(player_data['FTM'] / player_data['FTA']) if player_data['FTA'] != 0 else 0.0,
@@ -162,13 +191,28 @@ class LeagueWrapper:
             elif sortOrder == "last 30":
                 for k, v in fa.nine_cat_last_30.items():
                     player_data[k] = v
+            elif sortOrder == "total":
+                for k, v in fa.nine_cat_total.items():
+                    player_data[k] = v
 
             expected_games = 0
-
             if fa.injuryStatus and fa.injuryStatus != "OUT":
-                if fa.schedule:
-                    dates = [datetime.strptime(entry, "%Y-%m-%d").date() for entry in fa.schedule]
-                    expected_games = self.calculate_num_games(dates)
+                player_data['Injured'] = False
+                for date in date_strings:
+                    if fa.proTeam != "FA":
+                        if date in self.team_dates[fa.proTeam]:
+                            player_data[date] = 1
+                            expected_games += 1
+                        else:
+                            player_data[date] = 0
+                    else:
+                        for date in date_strings:
+                            player_data[date] = 0
+                    
+            else:
+                for date in date_strings:
+                    player_data[date] = 0
+                player_data['Injured'] = True
 
             player_data['FT%'] = round(
                 float(player_data['FTM'] / player_data['FTA']) if player_data['FTA'] != 0 else 0.0,
@@ -249,10 +293,3 @@ class LeagueWrapper:
         days_until_sunday = (6 - self.today.weekday()) % 7
         return self.today + timedelta(days=days_until_sunday)
     
-    def calculate_num_games(self, dates : List[date]):
-        if not dates:
-            return 0 
-        
-        start = self.today
-        end = self.end_date
-        return sum(1 for d in dates if start <= d <= end)

@@ -2,7 +2,7 @@ from api_wrapper import LeagueWrapper
 import numpy as np
 
 class FantasyPage:
-    def __init__(self, league_id : int, s2 : str, swid : str, year : int, sortOrder : str = "average"):
+    def __init__(self, league_id : int, s2 : str, swid : str, year : int, sortOrder : str = "total"):
         leagueWrapper = LeagueWrapper(league_id, s2, swid, year, sortOrder)
         self.player_dataframe = leagueWrapper.base_player_dataframe
         self.scoreboard = leagueWrapper.scoreboard
