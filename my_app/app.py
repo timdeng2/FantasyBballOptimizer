@@ -12,8 +12,9 @@ year = int(os.getenv('TEST_YEAR'))
 league_id = int(os.getenv('TEST_LEAGUE_ID'))
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-# from NineCat.fantasy_page import FantasyPage
+from NineCat.fantasy_page import FantasyPage
 import streamlit as st
+import plotly.graph_objects as go
 
 
 from pathlib import Path
@@ -58,14 +59,24 @@ team_color_map = {
 # -----------------------------
 # Load data
 # -----------------------------
-mock_path1 = os.path.join("mockData", "player_df.parquet")
-mock_path2 = os.path.join("mockData", "scoreboard.parquet")
+# mock data paths
+# mock_path1 = os.path.join("mockData", "player_df.parquet")
+# mock_path2 = os.path.join("mockData", "scoreboard.parquet")
+# scoreboard = pd.read_parquet(mock_path2)
+# players_df = pd.read_parquet(mock_path1)
+# mock_matchups =[(5, 7), (6 , 4), (3, 2), (8, 1)]
+# num_matchups = len(mock_matchups)
 
-scoreboard = pd.read_parquet(mock_path2)
-players_df = pd.read_parquet(mock_path1)
+@st.cache_resource
+def load_fantasy_page():
+    return FantasyPage(league_id, s2, swid, year)
 
-mock_matchups =[(5, 7), (6 , 4), (3, 2), (8, 1)]
-num_matchups = len(mock_matchups)
+fp = load_fantasy_page()
+scoreboard = fp.scoreboard
+players_df = fp.player_dataframe
+matchups = fp.matchups
+num_matchups = len(matchups)
+
 
 players_df["Color"] = players_df["ProTeam"].map(team_color_map)
 
@@ -79,8 +90,10 @@ if 'players_df' not in st.session_state:
 if 'matchup_idx' not in st.session_state:
     st.session_state.matchup_idx = 0
 
+
 current_idx = st.session_state.matchup_idx
-current_matchup = mock_matchups[current_idx]
+current_matchup = matchups[current_idx]
+
 
 team1_id, team2_id = current_matchup
 
@@ -127,87 +140,125 @@ def add_player(player_id : int):
             st.rerun()
             return
 
+def update_schedule(player_id : int, binary_cols: dict) -> None:
+    players_df = st.session_state.players_df
+    idx = players_df.index[players_df["Player ID"] == player_id][0]
+    prev_expected_days = players_df.loc[idx, "Expected Games"]
+    new_expected_days = sum(binary_cols.values())
+    players_df.loc[idx, list(binary_cols.keys())] = pd.Series(binary_cols)
+    if new_expected_days != prev_expected_days:
+        players_df.loc[idx, "Expected Games"] = new_expected_days
+        # recompute expected stats
+        for stat in NINE_CAT_STATS:
+            players_df.loc[idx, f"Expected {stat}"] = (
+                players_df.loc[idx, stat] *
+                new_expected_days
+            )
+    st.rerun()
+
+
 @st.dialog("Player Details", width="large")
 def show_player_details(player_data):
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        # Player headshot
-        path = Path("PlayerHeadshots") / f"{player_data['Player ID']}.png"
-        if path.exists():
-            st.image(str(path), use_container_width=True)
+    tab1, tab2 = st.tabs(["Stats", "Schedule"])
+    with tab1:
+        col1, col2 = st.columns([1, 2])
         
-        # Basic info
-        st.markdown(
-            f'<p style="font-size: 36px; color: white; text-align: center;">{player_data["Player Name"]}</p>',
-            unsafe_allow_html=True
-        )
-        positions = ["PG", "SG", "SF", "PF", "C"]
-        playable = [pos for pos in positions if player_data[pos] == 1]
-        st.markdown(
-            f'<p style="font-size: 18px; color: #ccc; text-align: center; font-style: italic;">{", ".join(playable)}</p>',
-            unsafe_allow_html=True
-        )
-        
-        # Show badges
-        st.subheader("Top Categories")
-        badges = get_badges(player_data)
-
-        # Create rows of 3 badges each
-        for row_start in range(0, len(badges), 3):
-            badge_cols = st.columns(3)
-            row_badges = badges[row_start:row_start + 3]
+        with col1:
+            # Player headshot
+            path = Path("PlayerHeadshots") / f"{player_data['Player ID']}.png"
+            if path.exists():
+                st.image(str(path), width='stretch')
             
-            for idx, badge_path in enumerate(row_badges):
-                with badge_cols[idx]:
-                    badge_string = badge_path.split("/")[-1].split(".")[0]
-                    badge_cat = badge_string.split("_")[0]
-                    badge_tier = badge_string.split("_")[1]
-                    if badge_tier != "HOF":
-                        badge_tier = badge_tier.lower().capitalize()
-                    else:
-                        badge_tier = "Hall of Fame"
-                    if Path(badge_path).exists():
-                        st.image(badge_path, caption=f"{badge_tier} {badge_cat} Badge", use_container_width=True)
-    
-    with col2:
-        st.subheader("Statistics")
-        CATS = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO']
+            # Basic info
+            st.markdown(
+                f'<p style="font-size: 36px; color: white; text-align: center;">{player_data["Player Name"]}</p>',
+                unsafe_allow_html=True
+            )
+            positions = ["PG", "SG", "SF", "PF", "C"]
+            playable = [pos for pos in positions if player_data[pos] == 1]
+            st.markdown(
+                f'<p style="font-size: 18px; color: #ccc; text-align: center; font-style: italic;">{", ".join(playable)}</p>',
+                unsafe_allow_html=True
+            )
+            
+            # Show badges
+            st.subheader("Top Categories")
+            badges = get_badges(player_data)
 
-        stat_cols = st.columns(3)
-        for idx, cat in enumerate(CATS):
-            with stat_cols[idx % 3]:
-                actual_stat = player_data[cat]
-                percentile = player_data[f"{cat}_percentile"]
+            # Create rows of 3 badges each
+            for row_start in range(0, len(badges), 3):
+                badge_cols = st.columns(3)
+                row_badges = badges[row_start:row_start + 3]
                 
-
-                if cat in ['FG%', 'FT%']:
-                    display_value = f"{actual_stat * 100:.0f}%"
-                else:
-                    display_value = f"{actual_stat:.1f}"
-                if percentile >= 70:
-                    color = "#147914" 
-                elif percentile <= 35:
-                    color = "#851616"  
-                else:
-                    color = "white"
-                
-                st.markdown(f"**{cat}**")
-                st.markdown(
-                    f'<p style="font-size: 28px; font-weight: normal; color: {color}; margin-bottom: 5px;">{display_value}</p>',
-                    unsafe_allow_html=True
-                )
+                for idx, badge_path in enumerate(row_badges):
+                    with badge_cols[idx]:
+                        badge_string = badge_path.split("/")[-1].split(".")[0]
+                        badge_cat = badge_string.split("_")[0]
+                        badge_tier = badge_string.split("_")[1]
+                        if badge_tier != "HOF":
+                            badge_tier = badge_tier.lower().capitalize()
+                        else:
+                            badge_tier = "Hall of Fame"
+                        if Path(badge_path).exists():
+                            st.image(badge_path, caption=f"{badge_tier} {badge_cat} Badge", width='stretch')
         
-        st.divider()
+        with col2:
+            st.subheader("Statistics")
+            CATS = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO']
 
-        st.subheader("Percentiles", help="Shows how the player ranks in each category compared to current rostered players.")
-        for cat in CATS:
-            percentile = player_data[f"{cat}_percentile"]
-            col_cat, col_bar = st.columns([1, 3])
-            with col_cat:
-                st.markdown(f"**{cat}:**")
-            with col_bar:
-                st.progress(percentile / 100, text=f"{percentile:.1f}%")
+            stat_cols = st.columns(3)
+            for idx, cat in enumerate(CATS):
+                with stat_cols[idx % 3]:
+                    actual_stat = player_data[cat]
+                    percentile = player_data[f"{cat}_percentile"]
+                    
+
+                    if cat in ['FG%', 'FT%']:
+                        display_value = f"{actual_stat * 100:.0f}%"
+                    else:
+                        display_value = f"{actual_stat:.1f}"
+                    if percentile >= 70:
+                        color = "#147914" 
+                    elif percentile <= 35:
+                        color = "#851616"  
+                    else:
+                        color = "white"
+                    
+                    st.markdown(f"**{cat}**")
+                    st.markdown(
+                        f'<p style="font-size: 28px; font-weight: normal; color: {color}; margin-bottom: 5px;">{display_value}</p>',
+                        unsafe_allow_html=True
+                    )
+            
+            st.divider()
+
+            st.subheader("Percentiles", help="Shows how the player ranks in each category compared to current rostered players.")
+            for cat in CATS:
+                percentile = player_data[f"{cat}_percentile"]
+                col_cat, col_bar = st.columns([1, 3])
+                with col_cat:
+                    st.markdown(f"**{cat}:**")
+                with col_bar:
+                    st.progress(percentile / 100, text=f"{percentile:.1f}%")
+    with tab2:
+        cols = [col for col in player_data.index if col.startswith("202")]
+
+        st.header("Matchup Schedule")
+
+        binary_cols = {}
+        for col in cols:
+            binary_cols[col] = player_data[col]
+
+        with st.form(f"schedule_form_{player_data['Player ID']}"):
+            for col in cols:
+                day = st.toggle(col, key=col + str(player_data["Player ID"]), value=bool(player_data[col]))
+                binary_cols[col] = 1 if day else 0
+
+            submitted = st.form_submit_button("Update Schedule")
+
+            if submitted:
+                update_schedule(player_data["Player ID"], binary_cols)
+
 
 def get_badges(row):
     CATS = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO']
@@ -244,9 +295,68 @@ def get_top_3_badges(row):
 
 def sort_key(row):
     if row["Name"] == "Current":
-        return (row["Stat"], row["Team"], float('inf'))  # "Current" always last in sort = first in stack
+        return (row["Stat"], row["Team"], float('-inf'))  # "Current" always last in sort = first in stack
     else:
         return (row["Stat"], row["Team"], -row["Value"])
+    
+def compute_projected_scores(team1_id, team2_id):
+    res = [0,0]
+    percentage_stats = ["FGA", "FTA", "FGM", "FTM"]
+    for stat in NINE_CAT_STATS:
+        if stat not in percentage_stats:
+            expected_col = f"Expected {stat}"
+            team1_expected = st.session_state.players_df.loc[
+                st.session_state.players_df["Team ID"] == team1_id, expected_col
+            ].sum() + scoreboard.loc[scoreboard["Team ID"] == team1_id, stat].iloc[0]
+            team2_expected = st.session_state.players_df.loc[
+                st.session_state.players_df["Team ID"] == team2_id, expected_col
+            ].sum() + scoreboard.loc[scoreboard["Team ID"] == team2_id, stat].iloc[0]
+
+            if stat != "TO":
+                if team1_expected > team2_expected:
+                    res[0] += 1.0
+                elif team2_expected > team1_expected:
+                    res[1] += 1.0
+                else:
+                    res[0] += 0.5
+                    res[1] += 0.5
+            else:
+                if team1_expected < team2_expected:
+                    res[0] += 1.0
+                elif team2_expected < team1_expected:
+                    res[1] += 1.0
+                else:
+                    res[0] += 0.5
+                    res[1] += 0.5
+    for stat in ["FG", "FT"]:
+        made_col = f"{stat}M"
+        attempt_col = f"{stat}A"
+        team1_made = st.session_state.players_df.loc[
+            st.session_state.players_df["Team ID"] == team1_id, f"Expected {made_col}"
+        ].sum() + scoreboard.loc[scoreboard["Team ID"] == team1_id, made_col].iloc[0]
+        team1_attempts = st.session_state.players_df.loc[
+            st.session_state.players_df["Team ID"] == team1_id, f"Expected {attempt_col}"
+        ].sum() + scoreboard.loc[scoreboard["Team ID"] == team1_id, attempt_col].iloc[0]
+        team2_made = st.session_state.players_df.loc[
+            st.session_state.players_df["Team ID"] == team2_id, f"Expected {made_col}"
+        ].sum() + scoreboard.loc[scoreboard["Team ID"] == team2_id, made_col].iloc[0]
+        team2_attempts = st.session_state.players_df.loc[
+            st.session_state.players_df["Team ID"] == team2_id, f"Expected {attempt_col}"
+        ].sum() + scoreboard.loc[scoreboard["Team ID"] == team2_id, attempt_col].iloc[0]
+
+        team1_pct = team1_made / team1_attempts if team1_attempts > 0 else 0
+        team2_pct = team2_made / team2_attempts if team2_attempts > 0 else 0
+
+        if team1_pct > team2_pct:
+            res[0] += 1.0
+        elif team2_pct > team1_pct:
+            res[1] += 1.0
+        else:
+            res[0] += 0.5
+            res[1] += 0.5
+    return res
+    
+
 # -----------------------------
 # Setup Streamlit page
 # -----------------------------
@@ -287,7 +397,7 @@ with col_next:
 
 # After buttons, update current matchup
 current_idx = st.session_state.matchup_idx
-current_matchup = mock_matchups[current_idx]
+current_matchup = matchups[current_idx]
 team1_id, team2_id = current_matchup
 st.markdown("---")
 
@@ -312,45 +422,73 @@ with col_left_outer:
 # Middle scores
 with col_middle_outer:
     col_score1, col_vs, col_score2 = st.columns([1.045, 0.5, 1])  # split middle column
-    # Team 1 score
-    # projected scores just 4.5 for now
+    ps = compute_projected_scores(team1_id, team2_id)
+
+    winner_gradient = "linear-gradient(135deg, #f6d365 0%, #fda085 100%)"
+    loser_gradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
     with col_score1:
         st.markdown(f"""
         <div style="text-align:center; font-family:Gill Sans, sans-serif;">
-            <span style="font-size:64px; font-weight:bold">{scoreboard.loc[scoreboard['Team ID'] == team1_id, 'Score'].iloc[0]}</span><br>
-            <span style="
-                font-size:18px;
+            <div style="margin-bottom:12px;">
+                <div style="font-size:72px; font-weight:bold; line-height:1; margin-bottom:8px;">
+                    {scoreboard.loc[scoreboard['Team ID'] == team1_id, 'Score'].iloc[0]}
+                </div>
+                <div style="font-size:12px; color:#888; text-transform:uppercase; letter-spacing:1px; font-weight:600;">
+                    Current Score
+                </div>
+            </div>
+            <div style="
+                font-size:22px;
                 font-weight:bold;
-                font-family:Courier New, monospace;
-                color:white;
-                background-color:rgba(0, 0, 0, 0.5);
-                padding:8px 16px;
-                border-radius:20px;
+                font-family:Gill Sans, sans-serif;
+                color:#fff;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding:12px 20px;
+                border-radius:25px;
                 display:inline-block;
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+                margin-top:8px;
             ">
-            {4.5} 
-            </span>
+                {ps[0]}
+                <div style="font-size:10px; color:rgba(255,255,255,0.8); text-transform:uppercase; letter-spacing:1px; margin-top:2px;">
+                    Projected score
+                </div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
+    
     with col_vs:
         st.markdown("<h3 style='text-align:center;'>VS</h3>", unsafe_allow_html=True)
+    
     # Team 2 score
     with col_score2:
         st.markdown(f"""
         <div style="text-align:center; font-family:Gill Sans, sans-serif;">
-            <span style="font-size:64px; font-weight:bold">{scoreboard.loc[scoreboard['Team ID'] == team2_id, 'Score'].iloc[0]}</span><br>
-            <span style="
-                font-size:18px;
+            <div style="margin-bottom:12px;">
+                <div style="font-size:72px; font-weight:bold; line-height:1; margin-bottom:8px;">
+                    {scoreboard.loc[scoreboard['Team ID'] == team2_id, 'Score'].iloc[0]}
+                </div>
+                <div style="font-size:12px; color:#888; text-transform:uppercase; letter-spacing:1px; font-weight:600;">
+                    Current Score
+                </div>
+            </div>
+            <div style="
+                font-size:22px;
                 font-weight:bold;
-                font-family:Courier New, monospace;
-                color:white;
-                background-color:rgba(0, 0, 0, 0.5);
-                padding:8px 16px;
-                border-radius:20px;
+                font-family:Gill Sans, sans-serif;
+                color:#fff;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding:12px 20px;
+                border-radius:25px;
                 display:inline-block;
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+                margin-top:8px;
             ">
-            {4.5}
-            </span>
+                {ps[1]}
+                <div style="font-size:10px; color:rgba(255,255,255,0.8); text-transform:uppercase; letter-spacing:1px; margin-top:2px;">
+                    Projected score
+                </div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -409,7 +547,7 @@ with col1:
             
             with col_img:
                 if path.exists():
-                    st.image(str(path), use_container_width=True)
+                    st.image(str(path), width='stretch')
             
             with col_info:
                 st.markdown(
@@ -422,14 +560,14 @@ with col1:
                     if badge_idx < 3:
                         with badge_cols[badge_idx]:
                             if Path(badge_path).exists():
-                                st.image(badge_path, use_container_width=True)
+                                st.image(badge_path, width='stretch')
                 
                 btn_col1, btn_col2 = st.columns(2)
                 with btn_col1:
-                    if st.button("Details", key=f"player_btn_{pid}", use_container_width=True):
+                    if st.button("Details", key=f"player_btn_{pid}", width='stretch'):
                         show_player_details(row)
                 with btn_col2:
-                    if st.button("Remove", key=f"remove_btn_{pid}", type="primary", use_container_width=True):
+                    if st.button("Remove", key=f"remove_btn_{pid}", type="primary", width='stretch'):
                         remove_player(team1_id, pid)
             
             st.divider()
@@ -473,7 +611,7 @@ with col2:
             
             with col_img:
                 if path.exists():
-                    st.image(str(path), use_container_width=True)
+                    st.image(str(path), width='stretch')
             
             with col_info:
                 st.markdown(
@@ -486,14 +624,14 @@ with col2:
                     if badge_idx < 3:
                         with badge_cols[badge_idx]:
                             if Path(badge_path).exists():
-                                st.image(badge_path, use_container_width=True)
+                                st.image(badge_path, width='stretch')
 
                 btn_col2, btn_col1 = st.columns(2)
                 with btn_col1:
-                    if st.button("Details", key=f"player_btn_{pid}", use_container_width=True):
+                    if st.button("Details", key=f"player_btn_{pid}", width='stretch'):
                         show_player_details(row)
                 with btn_col2:
-                    if st.button("Remove", key=f"remove_btn_{pid}", type="primary", use_container_width=True):
+                    if st.button("Remove", key=f"remove_btn_{pid}", type="primary", width='stretch'):
                         remove_player(team2_id, pid)
             
             st.divider()
@@ -501,112 +639,360 @@ with col2:
 
 
 with middle:
-    combined_data = []
+    players_df = st.session_state.players_df
+    tab1, tab2, tab3 = st.tabs(["Stats Stacked Bars", "Expected FG%", "Expected FT%"])
+    with tab1:
+        selected_stats = st.multiselect(
+            "Select stats to display:",
+            options=[stat for stat in NINE_CAT_STATS if stat not in ["FGA", "FTA", "FTM", "FGM"]],
+            default=[stat for stat in NINE_CAT_STATS if stat not in ["FGA", "FTA", "FTM", "FGM"]]
+        )
+        
+        # Only proceed if stats are selected
+        if not selected_stats:
+            st.warning("Please select at least one stat to display.")
+        else:
+            combined_data = []
+            for stat in selected_stats:  # Changed from NINE_CAT_STATS to selected_stats
+                expected_col = f"Expected {stat}"
 
-    for stat in NINE_CAT_STATS:
-        if stat not in ["FGA", "FTA", "FTM","FGM"]:
-            expected_col = f"Expected {stat}"
+                # TEAM 1: each player's expected stat
+                team1_name = scoreboard.loc[scoreboard["Team ID"] == team1_id, "Team"].iloc[0]
+                team1_players = players_df.loc[players_df["Team ID"] == team1_id, ["Player Name", expected_col, "ProTeam"]]
+                team1_players = team1_players.rename(columns={expected_col: "Value"})
+                team1_players["Stat"] = stat
+                team1_players["Name"] = team1_players["Player Name"]
 
-            # TEAM 1: each player’s expected stat
-            team1_name = scoreboard.loc[scoreboard["Team ID"] == team1_id, "Team"].iloc[0]
-            team1_players = players_df.loc[players_df["Team ID"] == team1_id, ["Player Name", expected_col, "ProTeam"]]
-            team1_players = team1_players.rename(columns={expected_col: "Value"})
-            team1_players["Stat"] = stat
-            team1_players["Name"] = team1_players["Player Name"]
-
-            # add current as its own base segment
-            team1_current = scoreboard.loc[scoreboard["Team ID"] == team1_id, stat].iloc[0]
-            combined_data.append({
-                "Team": team1_name,
-                "Stat": stat,
-                "Name": "Current",
-                "Value": team1_current,
-                'Color': 'grey'
-            })
-
-            # add player-level expected segments
-            for _, row in team1_players.iterrows():
+                # add current as its own base segment
+                team1_current = scoreboard.loc[scoreboard["Team ID"] == team1_id, stat].iloc[0]
                 combined_data.append({
                     "Team": team1_name,
                     "Stat": stat,
-                    "Name": row["Name"],
-                    "Value": row["Value"],
-                    'Color': team_color_map[row["ProTeam"]]
+                    "Name": "Current",
+                    "Value": team1_current,
+                    'Color': 'grey'
                 })
 
-            # TEAM 2
-            team2_name = scoreboard.loc[scoreboard["Team ID"] == team2_id, "Team"].iloc[0]
-            team2_players = players_df.loc[players_df["Team ID"] == team2_id, ["Player Name", expected_col, "ProTeam"]]
-            team2_players = team2_players.rename(columns={expected_col: "Value"})
-            team2_players["Stat"] = stat
-            team2_players["Name"] = team2_players["Player Name"]
+                # add player-level expected segments
+                for _, row in team1_players.iterrows():
+                    combined_data.append({
+                        "Team": team1_name,
+                        "Stat": stat,
+                        "Name": row["Name"],
+                        "Value": row["Value"],
+                        'Color': team_color_map[row["ProTeam"]]
+                    })
 
-            # add current
-            team2_current = scoreboard.loc[scoreboard["Team ID"] == team2_id, stat].iloc[0]
-            combined_data.append({
-                "Team": team1_name,
-                "Stat": stat,
-                "Name": "Current",
-                "Value": team2_current,
-                'Color': 'grey'
-            })
+                # TEAM 2
+                team2_name = scoreboard.loc[scoreboard["Team ID"] == team2_id, "Team"].iloc[0]
+                team2_players = players_df.loc[players_df["Team ID"] == team2_id, ["Player Name", expected_col, "ProTeam"]]
+                team2_players = team2_players.rename(columns={expected_col: "Value"})
+                team2_players["Stat"] = stat
+                team2_players["Name"] = team2_players["Player Name"]
 
-            for _, row in team2_players.iterrows():
+                # add current
+                team2_current = scoreboard.loc[scoreboard["Team ID"] == team2_id, stat].iloc[0]
                 combined_data.append({
                     "Team": team2_name,
                     "Stat": stat,
-                    "Name": row["Name"],
-                    "Value": row["Value"],
-                    'Color': team_color_map[row["ProTeam"]]
+                    "Name": "Current",
+                    "Value": team2_current,
+                    'Color': 'grey'
                 })
 
-    df_chart = pd.DataFrame(combined_data)
+                for _, row in team2_players.iterrows():
+                    combined_data.append({
+                        "Team": team2_name,
+                        "Stat": stat,
+                        "Name": row["Name"],
+                        "Value": row["Value"],
+                        'Color': team_color_map[row["ProTeam"]]
+                    })
 
-    # --------------------------------------------
-    # Sort segments (so larger segments are lower)
-    # --------------------------------------------
-    # Sorting by Stat, Team, descending Value ensures biggest segments appear first (bottom of stack)
-    df_chart['sort_key'] = df_chart.apply(sort_key, axis=1)
-    df_chart = df_chart.sort_values(by='sort_key')
-    df_chart = df_chart.drop(columns=['sort_key'])
+            df_chart = pd.DataFrame(combined_data)
 
-    # --------------------------------------------
-    # Build Altair Chart
-    # --------------------------------------------
-    bars = (
-        alt.Chart(df_chart)
-        .mark_bar()
-        .encode(
-            x=alt.X("Stat:N", title=None, axis=alt.Axis(labelAngle=0)),
-            y=alt.Y("sum(Value):Q", title=None),
-            color=alt.Color("Color:N", 
-                scale=None,  # scale=None tells Altair to use the values as-is
-                legend=None  # hide legend if you want
+            # --------------------------------------------
+            # Sort segments (so larger segments are lower)
+            # --------------------------------------------
+            # Sorting by Stat, Team, descending Value ensures biggest segments appear first (bottom of stack)
+            df_chart['sort_key'] = df_chart.apply(sort_key, axis=1)
+            df_chart = df_chart.sort_values(by='sort_key')
+            df_chart = df_chart.drop(columns=['sort_key'])
+
+            # --------------------------------------------
+            # Build Altair Chart
+            # --------------------------------------------
+            bars = (
+                alt.Chart(df_chart)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Stat:N", title=None, axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("sum(Value):Q", title=None),
+                    color=alt.Color("Color:N", 
+                        scale=None,  # scale=None tells Altair to use the values as-is
+                        legend=None  # hide legend if you want
+                    ),
+                    order=alt.Order("sort_key:Q"),  # This is key - tells Altair stack order
+                    xOffset="Team:N",
+                    tooltip=["Team", "Name", "Value"]
+                )
+            )
+            text = (
+                alt.Chart(df_chart)
+                .mark_text(dy=-10, dx=4, color='white', fontSize=20)  # dy=-5 puts it slightly above the bar
+                .encode(
+                    x=alt.X("Stat:N"),
+                    y=alt.Y("sum(Value):Q"),
+                    text=alt.Text("sum(Value):Q", format=".1f"),  # format to 1 decimal place
+                    xOffset="Team:N"
+                )
+            )
+
+            # Combine the layers
+            chart = (bars + text).properties(
+                width=50,
+                height=1350
+            ).configure_mark()
+
+            st.altair_chart(chart, use_container_width=True)
+    with tab2:
+        help = ("""
+        This waterfall chart shows how each player's **projected field goal performance** 
+        affects the **team's expected FG%**.  
+        Green bars indicate players who *raise* the team percentage, red bars indicate players who *lower* it.
+        """)
+        st.info(help)
+
+
+        df1 = players_df.loc[players_df["Team ID"] == team1_id, ["Player Name", "Expected FGM", "Expected FGA"]]
+        df2 = players_df.loc[players_df["Team ID"] == team2_id, ["Player Name", "Expected FGM", "Expected FGA"]]
+
+        # --- Example data ---
+        present_made1 = scoreboard.loc[scoreboard["Team ID"] == team1_id, 'FGM'].iloc[0]
+        present_attempts1 = scoreboard.loc[scoreboard["Team ID"] == team1_id, 'FGA'].iloc[0]
+        current_ft_pct1 = present_made1 / present_attempts1  # 50%
+
+        # --- Compute player contributions ---
+        df1["Cum Expected FGM"] = present_made1 + df1["Expected FGM"].cumsum()
+        df1["Cum Expected FGA"] = present_attempts1 + df1["Expected FGA"].cumsum()
+        
+        df1["Expected_Team_FG%"] = df1["Cum Expected FGM"] / df1["Cum Expected FGA"]
+        df1["Prev_Team_FG%"] = [current_ft_pct1] + df1["Expected_Team_FG%"].iloc[:-1].tolist()
+        df1["Contribution"] = (df1["Expected_Team_FG%"] - df1["Prev_Team_FG%"]) * 100 
+        
+
+        # --- Prepare data for Waterfall ---
+        players = ["Current"] + df1["Player Name"].tolist() + ["Expected"]
+        values = [current_ft_pct1 * 100] + df1["Contribution"].tolist() + [0]
+        measure = ["absolute"] + ["relative"] * len(df1) + ["total"]
+
+        customdata = [f"{present_made1}/{present_attempts1}"] + [f"{row['Expected FGM']}/{row['Expected FGA']}" for i, row in df1.iterrows()] + [["N/A"]]
+
+        fig1 = go.Figure(go.Waterfall(
+            name="Team FG%",
+            orientation="v",
+            measure=measure,
+            x=players,
+            text=[f"{v:+.2f}%" for v in values],
+            y=values,
+            connector={"line": {"color": "rgba(63, 63, 63, 0.5)"}},
+            increasing={"marker": {"color": "green"}},
+            decreasing={"marker": {"color": "red"}},
+            totals={"marker": {"color": "gray"}},
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{x}</b><br>"        
+                "Change: %{y:+.2f}%<br>" 
+                "FTM/FTA: %{customdata}<extra></extra>" 
             ),
-            order=alt.Order("sort_key:Q"),  # This is key - tells Altair stack order
-            xOffset="Team:N",
-            tooltip=["Team", "Name", "Value"]
+        ))
+
+        fig1.update_layout(
+            title=f"{scoreboard.loc[scoreboard['Team ID'] == team1_id, 'Team'].iloc[0]} Projected FG% Waterfall",
+            yaxis_title="FG% (Expected)",
+            waterfallgap=0.1,
+            template="plotly_white",
         )
-    )
-    text = (
-        alt.Chart(df_chart)
-        .mark_text(dy=-10, dx=4, color='white', fontSize=20)  # dy=-5 puts it slightly above the bar
-        .encode(
-            x=alt.X("Stat:N"),
-            y=alt.Y("sum(Value):Q"),
-            text=alt.Text("sum(Value):Q", format=".1f"),  # format to 1 decimal place
-            xOffset="Team:N"
+
+        st.plotly_chart(fig1)
+
+        st.markdown(f"""
+        **Current FG%:** {current_ft_pct1 * 100:.3f}%  
+        **Expected FG%:** {df1['Expected_Team_FG%'].iloc[-1] * 100:.3f}%
+        """)
+        st.markdown("---")
+
+        present_made2 = scoreboard.loc[scoreboard["Team ID"] == team2_id, 'FGM'].iloc[0]
+        present_attempts2 = scoreboard.loc[scoreboard["Team ID"] == team2_id, 'FGA'].iloc[0]
+        current_ft_pct2 = present_made2 / present_attempts2  # 50%
+
+        df2 = players_df.loc[players_df["Team ID"] == team2_id, ["Player Name", "Expected FGM", "Expected FGA"]]
+
+        # --- Compute player contributions ---
+        df2["Cum Expected FGM"] = present_made2 + df2["Expected FGM"].cumsum()
+        df2["Cum Expected FGA"] = present_attempts2 + df2["Expected FGA"].cumsum()
+        
+        df2["Expected_Team_FG%"] = df2["Cum Expected FGM"] / df2["Cum Expected FGA"]
+        df2["Prev_Team_FG%"] = [current_ft_pct2] + df2["Expected_Team_FG%"].iloc[:-1].tolist()
+        df2["Contribution"] = (df2["Expected_Team_FG%"] - df2["Prev_Team_FG%"]) * 100 
+        
+
+        # --- Prepare data for Waterfall ---
+        players2 = ["Current"] + df2["Player Name"].tolist() + ["Expected"]
+        values2 = [current_ft_pct2 * 100] + df2["Contribution"].tolist() + [0]
+        measure2 = ["absolute"] + ["relative"] * len(df2) + ["total"]
+
+        customdata2 = [f"{present_made2}/{present_attempts2}"] + [f"{row['Expected FGM']}/{row['Expected FGA']}" for i, row in df2.iterrows()] + [["N/A"]]
+
+        fig = go.Figure(go.Waterfall(
+            name="Team FG%",
+            orientation="v",
+            measure=measure2,
+            x=players2,
+            text=[f"{v:+.2f}%" for v in values],
+            y=values2,
+            connector={"line": {"color": "rgba(63, 63, 63, 0.5)"}},
+            increasing={"marker": {"color": "green"}},
+            decreasing={"marker": {"color": "red"}},
+            totals={"marker": {"color": "gray"}},
+            customdata=customdata2,
+            hovertemplate=(
+                "<b>%{x}</b><br>"        
+                "Change: %{y:+.2f}%<br>" 
+                "FTM/FTA: %{customdata}<extra></extra>" 
+            ),
+        ))
+
+        fig.update_layout(
+            title=f"{scoreboard.loc[scoreboard['Team ID'] == team2_id, 'Team'].iloc[0]} Projected FG% Waterfall",
+            yaxis_title="FG% (Expected)",
+            waterfallgap=0.1,
+            template="plotly_white",
         )
-    )
 
-    # Combine the layers
-    chart = (bars + text).properties(
-        width=50,
-        height=1500
-    ).configure_mark()
+        st.plotly_chart(fig)
 
-    st.altair_chart(chart, use_container_width=True)
+        st.markdown(f"""
+        **Current FG%:** {current_ft_pct2 * 100:.3f}%  
+        **Expected FG%:** {df2['Expected_Team_FG%'].iloc[-1] * 100:.3f}%
+        """)
+    with tab3:
+        help = ("""
+        This waterfall chart shows how each player's **projected free throw performance** 
+        affects the **team's expected FT%**.  
+        Green bars indicate players who *raise* the team percentage, red bars indicate players who *lower* it.
+        """)
+        st.info(help)
 
+
+        df1 = players_df.loc[players_df["Team ID"] == team1_id, ["Player Name", "Expected FTM", "Expected FTA"]]
+        df2 = players_df.loc[players_df["Team ID"] == team2_id, ["Player Name", "Expected FTM", "Expected FTA"]]
+
+        present_made1 = scoreboard.loc[scoreboard["Team ID"] == team1_id, 'FTM'].iloc[0]
+        present_attempts1 = scoreboard.loc[scoreboard["Team ID"] == team1_id, 'FTA'].iloc[0]
+        current_ft_pct1 = present_made1 / present_attempts1  # 50%
+
+        df1["Cum Expected FTM"] = present_made1 + df1["Expected FTM"].cumsum()
+        df1["Cum Expected FTA"] = present_attempts1 + df1["Expected FTA"].cumsum()
+        
+        df1["Expected_Team_FT%"] = df1["Cum Expected FTM"] / df1["Cum Expected FTA"]
+        df1["Prev_Team_FT%"] = [current_ft_pct1] + df1["Expected_Team_FT%"].iloc[:-1].tolist()
+        df1["Contribution"] = (df1["Expected_Team_FT%"] - df1["Prev_Team_FT%"]) * 100 
+        
+        players = ["Current"] + df1["Player Name"].tolist() + ["Expected"]
+        values = [current_ft_pct1 * 100] + df1["Contribution"].tolist() + [0]
+        measure = ["absolute"] + ["relative"] * len(df1) + ["total"]
+
+        customdata = [f"{present_made1}/{present_attempts1}"] + [f"{row['Expected FTM']}/{row['Expected FTA']}" for i, row in df1.iterrows()] + [["N/A"]]
+
+        fig1 = go.Figure(go.Waterfall(
+            name="Team FT%",
+            orientation="v",
+            measure=measure,
+            x=players,
+            text=[f"{v:+.2f}%" for v in values],
+            y=values,
+            connector={"line": {"color": "rgba(63, 63, 63, 0.5)"}},
+            increasing={"marker": {"color": "green"}},
+            decreasing={"marker": {"color": "red"}},
+            totals={"marker": {"color": "gray"}},
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{x}</b><br>"        
+                "Change: %{y:+.2f}%<br>" 
+                "FTM/FTA: %{customdata}<extra></extra>" 
+            ),
+        ))
+
+        fig1.update_layout(
+            title=f"{scoreboard.loc[scoreboard['Team ID'] == team1_id, 'Team'].iloc[0]} Projected FT% Waterfall",
+            yaxis_title="FT% (Expected)",
+            waterfallgap=0.1,
+            template="plotly_white",
+        )
+
+        st.plotly_chart(fig1)
+
+        st.markdown(f"""
+        **Current FT%:** {current_ft_pct1 * 100:.3f}%  
+        **Expected FT%:** {df1['Expected_Team_FT%'].iloc[-1] * 100:.3f}%
+        """)
+        st.markdown("---")
+
+        present_made2 = scoreboard.loc[scoreboard["Team ID"] == team2_id, 'FTM'].iloc[0]
+        present_attempts2 = scoreboard.loc[scoreboard["Team ID"] == team2_id, 'FTA'].iloc[0]
+        current_ft_pct2 = present_made2 / present_attempts2  # 50%
+
+        df2 = players_df.loc[players_df["Team ID"] == team2_id, ["Player Name", "Expected FTM", "Expected FTA"]]
+
+        # --- Compute player contributions ---
+        df2["Cum Expected FTM"] = present_made2 + df2["Expected FTM"].cumsum()
+        df2["Cum Expected FTA"] = present_attempts2 + df2["Expected FTA"].cumsum()
+        
+        df2["Expected_Team_FT%"] = df2["Cum Expected FTM"] / df2["Cum Expected FTA"]
+        df2["Prev_Team_FT%"] = [current_ft_pct2] + df2["Expected_Team_FT%"].iloc[:-1].tolist()
+        df2["Contribution"] = (df2["Expected_Team_FT%"] - df2["Prev_Team_FT%"]) * 100 
+        
+
+        # --- Prepare data for Waterfall ---
+        players2 = ["Current"] + df2["Player Name"].tolist() + ["Expected"]
+        values2 = [current_ft_pct2 * 100] + df2["Contribution"].tolist() + [0]
+        measure2 = ["absolute"] + ["relative"] * len(df2) + ["total"]
+
+        customdata2 = [f"{present_made2}/{present_attempts2}"] + [f"{row['Expected FTM']}/{row['Expected FTA']}" for i, row in df2.iterrows()] + [["N/A"]]
+
+        fig = go.Figure(go.Waterfall(
+            name="Team FT%",
+            orientation="v",
+            measure=measure2,
+            x=players2,
+            text=[f"{v:+.2f}%" for v in values],
+            y=values2,
+            connector={"line": {"color": "rgba(63, 63, 63, 0.5)"}},
+            increasing={"marker": {"color": "green"}},
+            decreasing={"marker": {"color": "red"}},
+            totals={"marker": {"color": "gray"}},
+            customdata=customdata2,
+            hovertemplate=(
+                "<b>%{x}</b><br>"        
+                "Change: %{y:+.2f}%<br>" 
+                "FTM/FTA: %{customdata}<extra></extra>" 
+            ),
+        ))
+
+        fig.update_layout(
+            title=f"{scoreboard.loc[scoreboard['Team ID'] == team2_id, 'Team'].iloc[0]} Projected FT% Waterfall",
+            yaxis_title="FT% (Expected)",
+            waterfallgap=0.1,
+            template="plotly_white",
+        )
+
+        st.plotly_chart(fig)
+
+        st.markdown(f"""
+        **Current FT%:** {current_ft_pct2 * 100:.3f}%  
+        **Expected FT%:** {df2['Expected_Team_FT%'].iloc[-1] * 100:.3f}%
+        """)
 st.markdown("---")
 st.markdown("### Free Agents")
 
@@ -615,7 +1001,7 @@ free_agents_df = st.session_state.players_df.loc[
 ].copy()
 
 # Tabs for different filter categories
-tab1, tab2 = st.tabs(["Stats", "Expected Stats"])
+tab1, tab2, tab3 = st.tabs(["Stats", "Expected Stats", "Advanced"])
 
 with tab1:
     col1, col2, col3 = st.columns(3)
@@ -645,6 +1031,36 @@ with tab2:
     with col3:
         exp_to = st.slider("Max Expected TO",  0.0, 50.0, 50.0)
 
+with tab3:
+    # toggle for injured players
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        include_injured = st.toggle("Include Injured Players", value=True)
+        if not include_injured:
+            free_agents_df = free_agents_df[free_agents_df['Injured'] == False]
+        st.markdown('<div style="height:215px;"></div>', unsafe_allow_html=True)
+    dates = [col for col in free_agents_df.columns if col.startswith("202")]
+    with col2:
+        st.markdown("#### Availability Schedule")
+        for date in dates[:min(4, len(dates))]:
+            include_date = st.toggle(f"{date}", value=False)
+            if include_date:
+                free_agents_df = free_agents_df[free_agents_df[date] == 1]
+
+    with col3: 
+        st.markdown("####")
+        if len(dates) > 4:       
+            for date in dates[4:min(8, len(dates))]:
+                include_date = st.toggle(f"{date}", value=False)
+                if include_date:
+                    free_agents_df = free_agents_df[free_agents_df[date] == 1]
+    with col4:
+        st.markdown("####")
+        if len(dates) > 8:       
+            for date in dates[8:]:
+                include_date = st.toggle(f"{date}", value=False)
+                if include_date:
+                    free_agents_df = free_agents_df[free_agents_df[date] == 1]
 # Apply filters
 filtered_df = free_agents_df[
     (free_agents_df['PTS'] >= filter_pts) &
@@ -709,6 +1125,7 @@ with tab1:
     with st.container(height=800, key="free_agents"):
         for idx, (_, row) in enumerate(filtered_df.iterrows()):
             name = row["Player Name"]
+            injured = row["Injured"]
             positions = ["PG", "SG", "SF", "PF", "C"]
             playable = [pos for pos in positions if row[pos] == 1]
             playable_pos = ", ".join(playable)
@@ -718,12 +1135,23 @@ with tab1:
             col_name, col_stats, col_buttons = st.columns([1.5, 3, 1])
             
             with col_name:
-                st.markdown(
-                    f'<div style="padding: 0.25rem 0;">'
-                    f'<p style="font-size: 24px; font-weight: 600; margin: 0; line-height: 1.2;">{name}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
+                if injured:
+                    st.markdown(
+                        f'''
+                        <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0;">
+                            <p style="font-size: 24px; font-weight: 600; margin: 0; line-height: 1.2;">{name}</p>
+                            <p style="font-size: 16px; color: red; margin: 0; line-height: 1.2;">(Injured)</p>
+                        </div>
+                        ''',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        f'<div style="padding: 0.25rem 0;">'
+                        f'<p style="font-size: 24px; font-weight: 600; margin: 0; line-height: 1.2;">{name}</p>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
             
             with col_stats:
                 # Ultra-compact stats display
@@ -745,10 +1173,10 @@ with tab1:
             with col_buttons:
                 btn_col1, btn_col2 = st.columns(2)
                 with btn_col1:
-                    if st.button("Details", key=f"fa_details_{pid}", use_container_width=True, help="View Details"):
+                    if st.button("Details", key=f"fa_details_{pid}", width='stretch', help="View Details"):
                         show_player_details(row)
                 with btn_col2:
-                    if st.button("➕", key=f"fa_sign_{pid}", type="primary", use_container_width=True, help="Sign Player"):
+                    if st.button("➕", key=f"fa_sign_{pid}", type="primary", width='stretch', help="Sign Player"):
                         # Add sign player function here
                         add_player(pid)
             

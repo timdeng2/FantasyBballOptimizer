@@ -19,14 +19,14 @@ class LeagueWrapper:
             raise "Unknown Filter"
         
         print("Fetching Schedule...")
-        file_path = f"../Schedules/Team/{year}_schedule.json"
+        file_path = f"Schedules/Team/{year}_schedule.json"
 
         if not os.path.exists(file_path):
             file_path2 = f"../Schedules/Total/{year}_schedule.csv"
             if not os.path.exists(file_path2):
                 schedule_to_csv("../", year - 1)
                 
-            csv_to_team_dates(f"../Schedules/Total/{year}_schedule.csv", file_path)
+            csv_to_team_dates(f"Schedules/Total/{year}_schedule.csv", file_path)
 
 
         with open(file_path, "r") as f:
@@ -57,7 +57,7 @@ class LeagueWrapper:
         self.build_percentile()
 
     def initialize_images(self):
-        folder = "../PlayerHeadshots"
+        folder = "PlayerHeadshots"
         ids = {os.path.splitext(f)[0] for f in os.listdir(folder) if f.endswith(".png")}
 
         headers = {
